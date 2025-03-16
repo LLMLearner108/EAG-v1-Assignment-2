@@ -106,7 +106,7 @@ async function generateSummaryWithGemini(data) {
       url: commit.html_url
     })))}
     
-    Format the summary in a clear, readable way highlighting the most important changes and discussions.`;
+    Format the summary in a clear, readable way highlighting the most important changes and discussions. Please include the titles of the PRs, Issues and Discussions in the summary. Give a short summary for each of these items above. Use markdown to delineate the different sections and format the headings to each section in bold.`;
 
   console.log('📝 Prompt sent to Gemini:', prompt);
 
