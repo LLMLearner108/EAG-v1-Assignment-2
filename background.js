@@ -1,6 +1,45 @@
 // Background script initialization log
 console.log('🚀 GitHub Activity Summarizer background script initialized');
 
+// Global variable to store logs
+let debugLogs = [];
+
+// Helper function to log with timestamp
+function logWithTimestamp(message, data = null) {
+  const timestamp = new Date().toISOString();
+  const logEntry = `[${timestamp}] ${message}`;
+  debugLogs.push(logEntry);
+  if (data) {
+    debugLogs.push(JSON.stringify(data, null, 2));
+  }
+  console.log(logEntry);
+  if (data) console.log(data);
+}
+
+// Function to show debug popup
+async function showDebugPopup(title, content) {
+  const popup = await chrome.windows.create({
+    url: `data:text/html,
+      <html>
+        <head>
+          <title>${title}</title>
+          <style>
+            body { font-family: monospace; padding: 20px; white-space: pre-wrap; }
+            .error { color: red; }
+            .success { color: green; }
+          </style>
+        </head>
+        <body>
+          <h2>${title}</h2>
+          <div>${content.replace(/\n/g, '<br>')}</div>
+        </body>
+      </html>`,
+    type: 'popup',
+    width: 800,
+    height: 600
+  });
+}
+
 // Helper function to get repository info from URL
 function getRepoInfoFromUrl(url) {
   const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
@@ -29,41 +68,96 @@ async function fetchGitHubData(owner, repo) {
   const today = new Date();
   const lastWeek = new Date(today);
   lastWeek.setDate(today.getDate() - 7);
-  const since = lastWeek.toISOString();
 
   try {
+    // Helper function to safely fetch and process data
+    async function fetchGitHubEndpoint(url) {
+      logWithTimestamp(`Fetching: ${url}`);
+      const response = await fetch(url, { headers });
+      const responseText = await response.text();
+      
+      try {
+        const data = JSON.parse(responseText);
+        if (!Array.isArray(data)) {
+          logWithTimestamp('❌ Response is not an array:', data);
+          if (data.message) {
+            logWithTimestamp('API Message:', data.message);
+          }
+          return [];
+        }
+        return data;
+      } catch (e) {
+        logWithTimestamp('❌ Failed to parse response:', responseText);
+        return [];
+      }
+    }
+
     // Fetch PRs
-    const prs = await fetch(
-      `${baseUrl}/repos/${owner}/${repo}/pulls?state=all&since=${since}`,
-      { headers }
-    ).then(res => res.json());
+    logWithTimestamp('Fetching Pull Requests...');
+    const prs = await fetchGitHubEndpoint(
+      `${baseUrl}/repos/${owner}/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`
+    );
+    logWithTimestamp(`Found ${prs.length} PRs`);
 
     // Fetch Issues
-    const issues = await fetch(
-      `${baseUrl}/repos/${owner}/${repo}/issues?since=${since}`,
-      { headers }
-    ).then(res => res.json());
+    logWithTimestamp('Fetching Issues...');
+    const issues = await fetchGitHubEndpoint(
+      `${baseUrl}/repos/${owner}/${repo}/issues?state=all&sort=updated&direction=desc&per_page=100`
+    );
+    logWithTimestamp(`Found ${issues.length} Issues`);
 
     // Fetch Commits
-    const commits = await fetch(
-      `${baseUrl}/repos/${owner}/${repo}/commits?since=${since}`,
-      { headers }
-    ).then(res => res.json());
+    logWithTimestamp('Fetching Commits...');
+    const commits = await fetchGitHubEndpoint(
+      `${baseUrl}/repos/${owner}/${repo}/commits?since=${lastWeek.toISOString()}&per_page=100`
+    );
+    logWithTimestamp(`Found ${commits.length} Commits`);
 
-    // Fetch Discussions (if available)
+    // Fetch Discussions
+    logWithTimestamp('Fetching Discussions...');
     let discussions = [];
     try {
-      discussions = await fetch(
+      const discussionsResponse = await fetch(
         `${baseUrl}/repos/${owner}/${repo}/discussions`,
-        { headers }
+        { 
+          headers: {
+            ...headers,
+            'Accept': 'application/vnd.github.discussions-preview+json'
+          }
+        }
       ).then(res => res.json());
+      
+      if (Array.isArray(discussionsResponse)) {
+        discussions = discussionsResponse;
+      }
     } catch (e) {
-      console.log('Discussions not available for this repository');
+      logWithTimestamp('Discussions not available:', e.message);
+    }
+    logWithTimestamp(`Found ${discussions.length} Discussions`);
+
+    // Log detailed information about each item
+    if (prs.length > 0) {
+      logWithTimestamp('Pull Request Details:');
+      prs.forEach(pr => logWithTimestamp(`- ${pr.title} (${pr.state})`));
+    }
+
+    if (issues.length > 0) {
+      logWithTimestamp('Issue Details:');
+      issues.forEach(issue => {
+        logWithTimestamp(`- ${issue.title} (${issue.state})`);
+        logWithTimestamp(`  Created: ${issue.created_at}`);
+        logWithTimestamp(`  Updated: ${issue.updated_at}`);
+      });
+    }
+
+    if (commits.length > 0) {
+      logWithTimestamp('Commit Details:');
+      commits.forEach(commit => logWithTimestamp(`- ${commit.commit?.message}`));
     }
 
     return { prs, issues, commits, discussions };
   } catch (error) {
-    console.error('Error fetching GitHub data:', error);
+    logWithTimestamp('❌ Error fetching GitHub data:', error);
     throw error;
   }
 }
@@ -229,49 +323,65 @@ async function sendEmail(email, summary, url) {
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'generateSummary') {
-    console.group('Processing Generate Summary Request');
-    console.log('🔍 Processing URL:', request.url);
+    debugLogs = []; // Reset logs for new request
+    logWithTimestamp('Starting new request');
+    logWithTimestamp('Processing URL:', request.url);
     
     const repoInfo = getRepoInfoFromUrl(request.url);
-    console.log('📂 Repository Info:', repoInfo);
+    logWithTimestamp('Repository Info:', repoInfo);
     
     if (!repoInfo) {
-      console.error('❌ Invalid GitHub repository URL');
+      logWithTimestamp('❌ Invalid GitHub repository URL');
       sendResponse({ success: false, error: 'Invalid GitHub repository URL' });
-      console.groupEnd();
+      showDebugPopup('Error - Invalid URL', debugLogs.join('\n'));
       return true;
     }
 
     // Process the request
     (async () => {
       try {
-        console.log('🔄 Fetching GitHub data...');
+        logWithTimestamp('Fetching GitHub data...');
         const data = await fetchGitHubData(repoInfo.owner, repoInfo.repo);
-        console.log('📊 Fetched GitHub Data:', data);
+        logWithTimestamp('Fetched Data Summary:', {
+          prs: data.prs.length,
+          issues: data.issues.length,
+          commits: data.commits.length,
+          discussions: data.discussions.length
+        });
         
-        // Check if we have any data to summarize
-        if (!data.prs.length && !data.issues.length && !data.commits.length && !data.discussions.length) {
-          console.log('ℹ️ No activity found in the last 24 hours');
-          sendResponse({ 
-            success: false, 
-            error: 'No activity found in the last 24 hours for this repository' 
-          });
-          console.groupEnd();
+        const hasActivity = Array.isArray(data.prs) && Array.isArray(data.issues) && 
+                          Array.isArray(data.commits) && Array.isArray(data.discussions) &&
+                          (data.prs.length > 0 || data.issues.length > 0 || 
+                           data.commits.length > 0 || data.discussions.length > 0);
+        
+        if (!hasActivity) {
+          const today = new Date();
+          const lastWeek = new Date(today);
+          lastWeek.setDate(today.getDate() - 7);
+          const dateFormat = { year: 'numeric', month: 'long', day: 'numeric' };
+          const startDate = lastWeek.toLocaleDateString('en-US', dateFormat);
+          const endDate = today.toLocaleDateString('en-US', dateFormat);
+          
+          logWithTimestamp('No activity found in date range');
+          const errorMessage = `No activity found in this repository between ${startDate} and ${endDate}`;
+          showDebugPopup('No Activity Found', debugLogs.join('\n'));
+          sendResponse({ success: false, error: errorMessage });
           return;
         }
         
         const summary = await generateSummaryWithGemini(data);
         await sendEmail(request.email, summary, request.url);
-        console.log('✅ Process completed successfully');
+        logWithTimestamp('Process completed successfully');
+        showDebugPopup('Success - Process Complete', debugLogs.join('\n'));
         sendResponse({ success: true });
       } catch (error) {
-        console.error('❌ Error in background script:', error);
+        logWithTimestamp('❌ Error in background script:', error);
+        showDebugPopup('Error in Process', debugLogs.join('\n'));
         sendResponse({ 
           success: false, 
           error: error.message || 'An unexpected error occurred' 
         });
       }
-      console.groupEnd();
     })();
 
     return true; // Required for async response
