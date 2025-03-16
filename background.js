@@ -1,3 +1,6 @@
+// Background script initialization log
+console.log('🚀 GitHub Activity Summarizer background script initialized');
+
 // Helper function to get repository info from URL
 function getRepoInfoFromUrl(url) {
   const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
@@ -145,16 +148,57 @@ async function generateSummaryWithGemini(data) {
   }
 }
 
+// Function to get EmailJS credentials
+async function getEmailJSConfig() {
+  try {
+    const response = await fetch(chrome.runtime.getURL('config.json'));
+    const config = await response.json();
+    return config.EMAIL_JS;
+  } catch (error) {
+    console.error('Error loading EmailJS config:', error);
+    throw new Error('Failed to load EmailJS configuration');
+  }
+}
+
 // Function to send email
 async function sendEmail(email, summary) {
   console.group('Email Sending');
   console.log('📧 Attempting to send email to:', email);
   console.log('📋 Summary to be sent:', summary);
-  // Note: You'll need to implement your own email sending logic here
-  // For example, you could use a service like SendGrid or your own SMTP server
-  console.log('⚠️ Email sending not implemented yet');
-  console.groupEnd();
-  return true;
+
+  try {
+    const emailConfig = await getEmailJSConfig();
+    
+    const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        service_id: emailConfig.SERVICE_ID,
+        template_id: emailConfig.TEMPLATE_ID,
+        user_id: emailConfig.PUBLIC_KEY,
+        template_params: {
+          to_email: email,
+          summary: summary,
+          repo_name: 'GitHub Repository Summary',
+          date: new Date().toLocaleDateString()
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to send email: ' + response.statusText);
+    }
+
+    console.log('✅ Email sent successfully');
+    console.groupEnd();
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending email:', error);
+    console.groupEnd();
+    throw new Error('Failed to send email: ' + error.message);
+  }
 }
 
 // Listen for messages from popup
