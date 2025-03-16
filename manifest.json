@@ -6,11 +6,12 @@
   "permissions": [
     "activeTab",
     "storage",
-    "alarms",
-    "https://api.github.com/*"
+    "alarms"
   ],
   "host_permissions": [
-    "https://github.com/*"
+    "https://github.com/*",
+    "https://api.github.com/*",
+    "https://generativelanguage.googleapis.com/*"
   ],
   "background": {
     "service_worker": "background.js"
