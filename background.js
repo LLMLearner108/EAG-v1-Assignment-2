@@ -4,7 +4,19 @@ console.log('🚀 GitHub Activity Summarizer background script initialized');
 // Helper function to get repository info from URL
 function getRepoInfoFromUrl(url) {
   const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
-  return match ? { owner: match[1], repo: match[2] } : null;
+  if (!match) return null;
+  
+  // Clean up the repo name by removing special characters and .git extension
+  const repoName = match[2]
+    .replace(/\.git$/, '')           // Remove .git extension if present
+    .replace(/[^\w\s-]/g, '')       // Remove special characters except word chars, spaces, and hyphens
+    .replace(/[-\s]+/g, ' ')        // Replace multiple hyphens or spaces with single space
+    .trim();                        // Remove leading/trailing spaces
+  
+  return {
+    owner: match[1],
+    repo: repoName
+  };
 }
 
 // Function to fetch GitHub data
@@ -14,9 +26,10 @@ async function fetchGitHubData(owner, repo) {
     'Accept': 'application/vnd.github.v3+json'
   };
 
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const since = yesterday.toISOString();
+  const today = new Date();
+  const lastWeek = new Date(today);
+  lastWeek.setDate(today.getDate() - 7);
+  const since = lastWeek.toISOString();
 
   try {
     // Fetch PRs
@@ -76,8 +89,16 @@ async function getGeminiApiKey() {
 // Function to generate summary using Gemini
 async function generateSummaryWithGemini(data) {
   const API_KEY = await getGeminiApiKey();
-  // Using Gemini Flash 2.0 endpoint
   const API_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+
+  // Format dates for the prompt
+  const today = new Date();
+  const lastWeek = new Date(today);
+  lastWeek.setDate(today.getDate() - 7);
+  
+  const dateFormat = { year: 'numeric', month: 'long', day: 'numeric' };
+  const startDate = lastWeek.toLocaleDateString('en-US', dateFormat);
+  const endDate = today.toLocaleDateString('en-US', dateFormat);
 
   console.group('Gemini API Interaction');
   console.log('📊 Input Data Statistics:');
@@ -86,7 +107,7 @@ async function generateSummaryWithGemini(data) {
   console.log('- Commits:', data.commits.length);
   console.log('- Discussions:', data.discussions.length);
 
-  const prompt = `Please create a concise summary of the following GitHub repository activity from the past 24 hours:
+  const prompt = `Please create a concise summary of the following GitHub repository activity from ${startDate} to ${endDate}:
     
     Pull Requests (${data.prs.length}): ${JSON.stringify(data.prs.map(pr => ({
       title: pr.title,
@@ -106,7 +127,9 @@ async function generateSummaryWithGemini(data) {
       url: commit.html_url
     })))}
     
-    Format the summary in a clear, readable way highlighting the most important changes and discussions. Please include the titles of the PRs, Issues and Discussions in the summary. Give a short summary for each of these items above. Use markdown to delineate the different sections and format the headings to each section in bold.`;
+    Format the summary in a clear, readable way highlighting the most important changes and discussions from the past week. Please include the titles of the PRs, Issues and Discussions in the summary. Give a short summary for each of these items above. Use markdown to delineate the different sections and format the headings to each section in bold.
+
+    Start the summary with "GitHub Activity Summary for the period of ${startDate} to ${endDate}:"`;
 
   console.log('📝 Prompt sent to Gemini:', prompt);
 
@@ -165,10 +188,11 @@ async function sendEmail(email, summary, url) {
   console.group('Email Sending');
   console.log('📧 Attempting to send email to:', email);
   console.log('📋 Summary to be sent:', summary);
+
   try {
     const emailConfig = await getEmailJSConfig();
     const repoInfo = getRepoInfoFromUrl(url);
-    const repoName = repoInfo ? `${repoInfo.owner}/${repoInfo.repo}` : 'GitHub Repository';
+    const repoName = repoInfo ? repoInfo.repo : 'GitHub Repository';
     
     const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
       method: 'POST',
