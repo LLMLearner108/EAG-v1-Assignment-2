@@ -1,45 +1,6 @@
 // Background script initialization log
 console.log('🚀 GitHub Activity Summarizer background script initialized');
 
-// Global variable to store logs
-let debugLogs = [];
-
-// Helper function to log with timestamp
-function logWithTimestamp(message, data = null) {
-  const timestamp = new Date().toISOString();
-  const logEntry = `[${timestamp}] ${message}`;
-  debugLogs.push(logEntry);
-  if (data) {
-    debugLogs.push(JSON.stringify(data, null, 2));
-  }
-  console.log(logEntry);
-  if (data) console.log(data);
-}
-
-// Function to show debug popup
-async function showDebugPopup(title, content) {
-  const popup = await chrome.windows.create({
-    url: `data:text/html,
-      <html>
-        <head>
-          <title>${title}</title>
-          <style>
-            body { font-family: monospace; padding: 20px; white-space: pre-wrap; }
-            .error { color: red; }
-            .success { color: green; }
-          </style>
-        </head>
-        <body>
-          <h2>${title}</h2>
-          <div>${content.replace(/\n/g, '<br>')}</div>
-        </body>
-      </html>`,
-    type: 'popup',
-    width: 800,
-    height: 600
-  });
-}
-
 // Helper function to get repository info from URL
 function getRepoInfoFromUrl(url) {
   const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
@@ -72,49 +33,42 @@ async function fetchGitHubData(owner, repo) {
   try {
     // Helper function to safely fetch and process data
     async function fetchGitHubEndpoint(url) {
-      logWithTimestamp(`Fetching: ${url}`);
+      console.log('🔄 Fetching:', url);
       const response = await fetch(url, { headers });
-      const responseText = await response.text();
+      const data = await response.json();
       
-      try {
-        const data = JSON.parse(responseText);
-        if (!Array.isArray(data)) {
-          logWithTimestamp('❌ Response is not an array:', data);
-          if (data.message) {
-            logWithTimestamp('API Message:', data.message);
-          }
-          return [];
-        }
-        return data;
-      } catch (e) {
-        logWithTimestamp('❌ Failed to parse response:', responseText);
+      if (!Array.isArray(data)) {
+        console.error('❌ Expected array but got:', typeof data, data);
         return [];
       }
+      
+      return data;
     }
 
-    // Fetch PRs
-    logWithTimestamp('Fetching Pull Requests...');
-    const prs = await fetchGitHubEndpoint(
+    // Fetch PRs and filter for recent ones
+    const allPrs = await fetchGitHubEndpoint(
       `${baseUrl}/repos/${owner}/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`
     );
-    logWithTimestamp(`Found ${prs.length} PRs`);
+    const prs = allPrs.filter(pr => new Date(pr.updated_at) >= lastWeek);
+    console.log(`Found ${prs.length} recent PRs`);
 
-    // Fetch Issues
-    logWithTimestamp('Fetching Issues...');
-    const issues = await fetchGitHubEndpoint(
+    // Fetch Issues and filter for recent ones (excluding PRs)
+    const allIssues = await fetchGitHubEndpoint(
       `${baseUrl}/repos/${owner}/${repo}/issues?state=all&sort=updated&direction=desc&per_page=100`
     );
-    logWithTimestamp(`Found ${issues.length} Issues`);
+    const issues = allIssues.filter(issue => 
+      !issue.pull_request && // Exclude PRs
+      new Date(issue.updated_at) >= lastWeek // Only recent issues
+    );
+    console.log(`Found ${issues.length} recent issues`);
 
-    // Fetch Commits
-    logWithTimestamp('Fetching Commits...');
+    // Fetch Commits from the last week
     const commits = await fetchGitHubEndpoint(
       `${baseUrl}/repos/${owner}/${repo}/commits?since=${lastWeek.toISOString()}&per_page=100`
     );
-    logWithTimestamp(`Found ${commits.length} Commits`);
+    console.log(`Found ${commits.length} recent commits`);
 
     // Fetch Discussions
-    logWithTimestamp('Fetching Discussions...');
     let discussions = [];
     try {
       const discussionsResponse = await fetch(
@@ -128,36 +82,21 @@ async function fetchGitHubData(owner, repo) {
       ).then(res => res.json());
       
       if (Array.isArray(discussionsResponse)) {
-        discussions = discussionsResponse;
+        discussions = discussionsResponse.filter(d => new Date(d.updated_at) >= lastWeek);
       }
     } catch (e) {
-      logWithTimestamp('Discussions not available:', e.message);
+      console.log('Discussions not available for this repository:', e.message);
     }
-    logWithTimestamp(`Found ${discussions.length} Discussions`);
+    console.log(`Found ${discussions.length} recent discussions`);
 
-    // Log detailed information about each item
-    if (prs.length > 0) {
-      logWithTimestamp('Pull Request Details:');
-      prs.forEach(pr => logWithTimestamp(`- ${pr.title} (${pr.state})`));
-    }
-
-    if (issues.length > 0) {
-      logWithTimestamp('Issue Details:');
-      issues.forEach(issue => {
-        logWithTimestamp(`- ${issue.title} (${issue.state})`);
-        logWithTimestamp(`  Created: ${issue.created_at}`);
-        logWithTimestamp(`  Updated: ${issue.updated_at}`);
-      });
-    }
-
-    if (commits.length > 0) {
-      logWithTimestamp('Commit Details:');
-      commits.forEach(commit => logWithTimestamp(`- ${commit.commit?.message}`));
-    }
+    // Log summary of findings
+    console.group('📊 Activity Summary');
+    console.log(`PRs: ${prs.length}, Issues: ${issues.length}, Commits: ${commits.length}, Discussions: ${discussions.length}`);
+    console.groupEnd();
 
     return { prs, issues, commits, discussions };
   } catch (error) {
-    logWithTimestamp('❌ Error fetching GitHub data:', error);
+    console.error('Error fetching GitHub data:', error);
     throw error;
   }
 }
@@ -323,26 +262,24 @@ async function sendEmail(email, summary, url) {
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'generateSummary') {
-    debugLogs = []; // Reset logs for new request
-    logWithTimestamp('Starting new request');
-    logWithTimestamp('Processing URL:', request.url);
+    console.log('Starting new request');
+    console.log('Processing URL:', request.url);
     
     const repoInfo = getRepoInfoFromUrl(request.url);
-    logWithTimestamp('Repository Info:', repoInfo);
+    console.log('Repository Info:', repoInfo);
     
     if (!repoInfo) {
-      logWithTimestamp('❌ Invalid GitHub repository URL');
+      console.log('❌ Invalid GitHub repository URL');
       sendResponse({ success: false, error: 'Invalid GitHub repository URL' });
-      showDebugPopup('Error - Invalid URL', debugLogs.join('\n'));
       return true;
     }
 
     // Process the request
     (async () => {
       try {
-        logWithTimestamp('Fetching GitHub data...');
+        console.log('Fetching GitHub data...');
         const data = await fetchGitHubData(repoInfo.owner, repoInfo.repo);
-        logWithTimestamp('Fetched Data Summary:', {
+        console.log('Fetched Data Summary:', {
           prs: data.prs.length,
           issues: data.issues.length,
           commits: data.commits.length,
@@ -362,21 +299,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const startDate = lastWeek.toLocaleDateString('en-US', dateFormat);
           const endDate = today.toLocaleDateString('en-US', dateFormat);
           
-          logWithTimestamp('No activity found in date range');
+          console.log('No activity found in date range');
           const errorMessage = `No activity found in this repository between ${startDate} and ${endDate}`;
-          showDebugPopup('No Activity Found', debugLogs.join('\n'));
           sendResponse({ success: false, error: errorMessage });
           return;
         }
         
         const summary = await generateSummaryWithGemini(data);
         await sendEmail(request.email, summary, request.url);
-        logWithTimestamp('Process completed successfully');
-        showDebugPopup('Success - Process Complete', debugLogs.join('\n'));
+        console.log('Process completed successfully');
         sendResponse({ success: true });
       } catch (error) {
-        logWithTimestamp('❌ Error in background script:', error);
-        showDebugPopup('Error in Process', debugLogs.join('\n'));
+        console.error('❌ Error in background script:', error);
         sendResponse({ 
           success: false, 
           error: error.message || 'An unexpected error occurred' 
