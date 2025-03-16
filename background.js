@@ -74,7 +74,7 @@ async function getGeminiApiKey() {
 async function generateSummaryWithGemini(data) {
   const API_KEY = await getGeminiApiKey();
   // Using Gemini Flash 2.0 endpoint
-  const API_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-2:generateContent';
+  const API_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
   console.group('Gemini API Interaction');
   console.log('📊 Input Data Statistics:');
