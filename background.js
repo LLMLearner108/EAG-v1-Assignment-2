@@ -161,13 +161,14 @@ async function getEmailJSConfig() {
 }
 
 // Function to send email
-async function sendEmail(email, summary) {
+async function sendEmail(email, summary, url) {
   console.group('Email Sending');
   console.log('📧 Attempting to send email to:', email);
   console.log('📋 Summary to be sent:', summary);
-
   try {
     const emailConfig = await getEmailJSConfig();
+    const repoInfo = getRepoInfoFromUrl(url);
+    const repoName = repoInfo ? `${repoInfo.owner}/${repoInfo.repo}` : 'GitHub Repository';
     
     const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
       method: 'POST',
@@ -181,7 +182,7 @@ async function sendEmail(email, summary) {
         template_params: {
           to_email: email,
           summary: summary,
-          repo_name: 'GitHub Repository Summary',
+          repo_name: repoName,
           date: new Date().toLocaleDateString()
         }
       })
@@ -236,7 +237,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
         
         const summary = await generateSummaryWithGemini(data);
-        await sendEmail(request.email, summary);
+        await sendEmail(request.email, summary, request.url);
         console.log('✅ Process completed successfully');
         sendResponse({ success: true });
       } catch (error) {
