@@ -52,10 +52,29 @@ async function fetchGitHubData(owner, repo) {
   }
 }
 
+// Function to get API key securely from storage
+async function getGeminiApiKey() {
+  try {
+    const result = await chrome.storage.local.get(['geminiApiKey']);
+    if (!result.geminiApiKey) {
+      // If API key is not in storage, try to load from environment
+      const response = await fetch(chrome.runtime.getURL('config.json'));
+      const config = await response.json();
+      await chrome.storage.local.set({ geminiApiKey: config.GEMINI_API_KEY });
+      return config.GEMINI_API_KEY;
+    }
+    return result.geminiApiKey;
+  } catch (error) {
+    console.error('Error loading API key:', error);
+    throw new Error('Failed to load API key');
+  }
+}
+
 // Function to generate summary using Gemini
 async function generateSummaryWithGemini(data) {
-  const GEMINI_API_KEY = 'AIzaSyC1yRLL-NCpVqLzDMUN0ag5jkruPhf9Y1U';
-  const API_ENDPOINT = 'https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent';
+  const API_KEY = await getGeminiApiKey();
+  // Using Gemini Flash 2.0 endpoint
+  const API_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-2:generateContent';
 
   console.group('Gemini API Interaction');
   console.log('📊 Input Data Statistics:');
@@ -90,13 +109,19 @@ async function generateSummaryWithGemini(data) {
 
   try {
     console.log('🚀 Sending request to Gemini API...');
-    const response = await fetch(`${API_ENDPOINT}?key=${GEMINI_API_KEY}`, {
+    const response = await fetch(`${API_ENDPOINT}?key=${API_KEY}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }]
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 1024
+        }
       })
     });
 
